@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import FilterBar from '../components/common/FilterBar.vue';
@@ -12,6 +12,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { BIRD_AGES, RING_STATUSES, STATUS_COLOR, type BirdAge, type RingRecord, type RingStatus } from '../types/ring-record';
 import { formatDate } from '../utils/format';
 import { speciesCount } from '../utils/stats';
+import { buildTrack, trackSummary, type TrackEntry } from '../utils/track';
 
 const route = useRoute();
 const ringStore = useRingStore();
@@ -89,6 +90,17 @@ const existedRecord = computed(() => {
 });
 const existedHistory = computed(() => (existedRecord.value ? ringStore.historyOf(form.value.ringNo) : []));
 
+/** 本次为再次捕获：新建且环号已建档 → 鸟种沿用、状态记为重捕 / 回收 */
+const isRecapture = computed(() => !editingId.value && !!existedRecord.value);
+const statusOptions = computed<RingStatus[]>(() => (isRecapture.value ? ['重捕', '回收'] : [...RING_STATUSES]));
+
+watch(existedRecord, (record) => {
+  if (!record || editingId.value) return;
+  form.value.speciesCn = record.speciesCn;
+  form.value.speciesSci = record.speciesSci;
+  if (form.value.status === '初捕') form.value.status = '重捕';
+});
+
 const entityOptions = computed(() => speciesCount(ringStore.rings).map((item) => item.speciesCn));
 
 function openCreate() {
@@ -135,13 +147,6 @@ function openEdit(record: RingRecord) {
 async function submit() {
   const ok = await formRef.value?.validate().catch(() => false);
   if (!ok) return;
-  if (!editingId.value && existedRecord.value) {
-    ringStore.setDuplicate(existedRecord.value.id);
-    ElMessage.error(`环号 ${form.value.ringNo} 已存在，已跳转该环号历史记录`);
-    historyRingNo.value = form.value.ringNo;
-    historyVisible.value = true;
-    return;
-  }
   const payload = {
     ringNo: form.value.ringNo,
     colorRing: form.value.colorRing,
@@ -158,11 +163,27 @@ async function submit() {
     remark: form.value.remark,
   };
   if (editingId.value) {
-    await ringStore.updateRing(editingId.value, payload);
-    ElMessage.success(`已更新环志记录 ${payload.ringNo}`);
+    const { conflict } = await ringStore.updateRing(editingId.value, payload);
+    if (conflict) {
+      ElMessage.error(
+        conflict.bound === 'prev'
+          ? `环志日期早于该环号上一条记录（${conflict.date}），无法保存`
+          : `环志日期晚于该环号下一条记录（${conflict.date}），无法保存`,
+      );
+      return;
+    }
+    ElMessage.success(`已更新环志记录 ${payload.ringNo}，个体轨迹与统计已同步`);
   } else {
-    await ringStore.addRing(payload);
-    ElMessage.success(`已登记环志记录 ${payload.ringNo}（${payload.speciesCn}）`);
+    const { record, conflict } = await ringStore.addRing(payload);
+    if (conflict) {
+      ElMessage.error(`环志日期早于该环号上一条记录（${conflict.date}），无法保存`);
+      return;
+    }
+    ElMessage.success(
+      record && record.status !== '初捕'
+        ? `已登记${record.status}记录 ${record.ringNo}（鸟种沿用首捕档案：${record.speciesCn}）`
+        : `已登记环志记录 ${payload.ringNo}（${payload.speciesCn}）`,
+    );
   }
   dialogVisible.value = false;
 }
@@ -182,18 +203,25 @@ async function remove(record: RingRecord) {
 }
 
 const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
+/** 个体追踪时间线：按时间排序，含相隔天数、直线距离与跨点标记 */
+const trackEntries = computed<TrackEntry[]>(() => buildTrack(historyRows.value, siteStore.sites));
+const trackStat = computed(() => trackSummary(trackEntries.value));
+const trackSpecies = computed(() => historyRows.value[0]?.speciesCn ?? '');
+
+function trackRowClass({ row }: { row: TrackEntry }): string {
+  return row.moved ? 'track-moved-row' : '';
+}
 </script>
 
 <template>
   <div>
     <h2 class="page-title">环志记录录入与检索</h2>
-    <p class="page-desc">金属环号 + 彩环组合双段录入，自动查重；环号重复时提示已存在并跳转该环号历史记录。</p>
+    <p class="page-desc">
+      金属环号 + 彩环组合双段录入；环号首次出现照原流程建档，再次捕获时同一环号可直接登记，鸟种自动沿用、状态记为重捕 / 回收，「历史」窗口查看个体追踪轨迹。
+    </p>
 
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">登记环志记录</el-button>
-      <el-tag v-if="ringStore.duplicate" type="warning" effect="plain">
-        查重命中：{{ ringStore.duplicate.ringNo }}（{{ ringStore.duplicate.speciesCn }}）
-      </el-tag>
     </div>
 
     <FilterBar
@@ -240,28 +268,29 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑环志记录' : '登记环志记录'" width="760px">
+    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑环志记录' : isRecapture ? '登记再次捕获（重捕 / 回收）' : '登记环志记录'" width="760px">
       <RingCodeInput
         v-model:ring-no="form.ringNo"
         v-model:color-ring="form.colorRing"
         :existed="existedRecord"
         :history-count="existedHistory.length"
+        :recapture="isRecapture"
         @view-history="showHistory"
       />
 
       <el-divider content-position="left">鸟种与环志信息</el-divider>
 
-      <SpeciesPicker v-model:species-cn="form.speciesCn" v-model:species-sci="form.speciesSci" />
+      <SpeciesPicker v-model:species-cn="form.speciesCn" v-model:species-sci="form.speciesSci" :disabled="isRecapture" />
 
       <el-form ref="formRef" :model="form" :rules="rules" label-width="110px" class="ring-form">
         <el-form-item label="金属环号" prop="ringNo">
           <el-input v-model="form.ringNo" placeholder="如：A-10231" maxlength="20" />
         </el-form-item>
         <el-form-item label="鸟种中文名" prop="speciesCn">
-          <el-input v-model="form.speciesCn" placeholder="与上方鸟种选择一致" maxlength="30" />
+          <el-input v-model="form.speciesCn" placeholder="与上方鸟种选择一致" maxlength="30" :disabled="isRecapture" />
         </el-form-item>
         <el-form-item label="学名">
-          <el-input v-model="form.speciesSci" maxlength="60" />
+          <el-input v-model="form.speciesSci" maxlength="60" :disabled="isRecapture" />
         </el-form-item>
         <el-form-item label="年龄">
           <el-select v-model="form.age" style="width: 160px">
@@ -279,8 +308,9 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status" style="width: 160px">
-            <el-option v-for="status in RING_STATUSES" :key="status" :label="status" :value="status" />
+            <el-option v-for="status in statusOptions" :key="status" :label="status" :value="status" />
           </el-select>
+          <span v-if="isRecapture" class="form-hint">再次捕获只能记为重捕 / 回收</span>
         </el-form-item>
         <el-form-item label="环志人" prop="ringer">
           <el-input v-model="form.ringer" style="width: 160px" maxlength="16" placeholder="如：韩雪" />
@@ -306,17 +336,46 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
       </template>
     </el-dialog>
 
-    <el-dialog v-model="historyVisible" :title="`环号历史记录 · ${historyRingNo}`" width="720px">
-      <el-table :data="historyRows" size="small" border>
-        <el-table-column prop="ringNo" label="环号" width="110" />
-        <el-table-column prop="speciesCn" label="鸟种" width="110" />
-        <el-table-column label="环志日期" width="120">
-          <template #default="scope">{{ formatDate(scope.row.ringDate) }}</template>
+    <el-dialog v-model="historyVisible" :title="`个体追踪 · ${historyRingNo}`" width="820px">
+      <div v-if="trackEntries.length" class="track-summary">
+        <el-tag size="small" effect="plain">{{ trackSpecies }}</el-tag>
+        <span>捕获 {{ trackStat.count }} 次</span>
+        <span>跨点 {{ trackStat.moves }} 次</span>
+        <span>累计位移 {{ trackStat.totalKm }} km</span>
+      </div>
+      <el-table :data="trackEntries" size="small" border :row-class-name="trackRowClass">
+        <el-table-column label="次序" width="60" align="center">
+          <template #default="scope">{{ scope.$index + 1 }}</template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="90" />
-        <el-table-column prop="netNo" label="网号" width="100" />
-        <el-table-column prop="ringer" label="环志人" width="90" />
-        <el-table-column prop="remark" label="备注" show-overflow-tooltip />
+        <el-table-column label="环志日期" width="110">
+          <template #default="scope">{{ formatDate(scope.row.record.ringDate) }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="80">
+          <template #default="scope">
+            <el-tag :type="STATUS_COLOR[scope.row.record.status as RingStatus]" size="small">{{ scope.row.record.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="点位" min-width="170">
+          <template #default="scope">
+            <span>{{ siteStore.siteName(scope.row.record.siteId) }}</span>
+            <el-tag v-if="scope.row.moved" type="danger" size="small" effect="dark" class="moved-tag">跨点</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="相隔天数" width="90" align="right">
+          <template #default="scope">{{ scope.row.daysSincePrev === null ? '—' : `${scope.row.daysSincePrev} 天` }}</template>
+        </el-table-column>
+        <el-table-column label="直线距离" width="100" align="right">
+          <template #default="scope">{{ scope.row.distanceKm === null ? '—' : `${scope.row.distanceKm} km` }}</template>
+        </el-table-column>
+        <el-table-column label="网号" width="80">
+          <template #default="scope">{{ scope.row.record.netNo }}</template>
+        </el-table-column>
+        <el-table-column label="环志人" width="80">
+          <template #default="scope">{{ scope.row.record.ringer }}</template>
+        </el-table-column>
+        <el-table-column label="备注" min-width="120" show-overflow-tooltip>
+          <template #default="scope">{{ scope.row.record.remark }}</template>
+        </el-table-column>
       </el-table>
       <template #footer>
         <el-button type="primary" @click="historyVisible = false">关闭</el-button>
@@ -348,5 +407,26 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
 }
 .ring-form {
   margin-top: 10px;
+}
+.form-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  color: #8a99a5;
+}
+.track-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #2f4a44;
+}
+.moved-tag {
+  margin-left: 8px;
+}
+/* 跨点捕获行醒目提示 */
+:deep(.track-moved-row) {
+  --el-table-tr-bg-color: #fdf3e7;
+  font-weight: 600;
 }
 </style>

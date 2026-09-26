@@ -8,8 +8,10 @@ const props = withDefaults(
     speciesSci: string;
     allowCustom?: boolean;
     label?: string;
+    /** 重捕建档时锁定，鸟种沿用首捕档案 */
+    disabled?: boolean;
   }>(),
-  { allowCustom: true, label: '鸟种' },
+  { allowCustom: true, label: '鸟种', disabled: false },
 );
 
 const emit = defineEmits<{
@@ -37,6 +39,7 @@ const known = computed(() => SPECIES_CATALOG.some((item) => item.cn === props.sp
         filterable
         :allow-create="allowCustom"
         default-first-option
+        :disabled="disabled"
         placeholder="选择或输入鸟种中文名"
         style="width: 260px"
         @update:model-value="onSpeciesChange"
@@ -46,6 +49,7 @@ const known = computed(() => SPECIES_CATALOG.some((item) => item.cn === props.sp
       <el-tag v-if="speciesCn" :type="known ? 'success' : 'warning'" size="small" effect="plain">
         {{ known ? '名录内鸟种' : '自定义补充鸟种' }}
       </el-tag>
+      <el-tag v-if="disabled" type="info" size="small" effect="plain">沿用首捕档案</el-tag>
     </div>
     <div class="species-row">
       <span class="species-label">学名</span>
@@ -53,6 +57,7 @@ const known = computed(() => SPECIES_CATALOG.some((item) => item.cn === props.sp
         :model-value="speciesSci"
         placeholder="随中文名自动带出，可手工修正"
         maxlength="60"
+        :disabled="disabled"
         style="width: 260px"
         @update:model-value="(value: string) => emit('update:speciesSci', value)"
       />

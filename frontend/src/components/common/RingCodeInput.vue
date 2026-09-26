@@ -9,8 +9,10 @@ const props = withDefaults(
     /** 环号已存在时命中的历史记录 */
     existed?: RingRecord;
     historyCount?: number;
+    /** 本次是否为再次捕获（新建且环号已建档） */
+    recapture?: boolean;
   }>(),
-  { existed: undefined, historyCount: 0 },
+  { existed: undefined, historyCount: 0, recapture: false },
 );
 
 const emit = defineEmits<{
@@ -69,14 +71,22 @@ function compose(nextPrefix: string, nextSerial: string) {
     <el-alert
       v-if="existed"
       class="ring-alert"
-      type="warning"
+      :type="recapture ? 'success' : 'info'"
       show-icon
       :closable="false"
-      :title="`环号 ${ringNo} 已存在（${existed.speciesCn} · ${existed.status} · 该环号共 ${historyCount} 条历史记录）`"
-      description="重复环号不允许再次登记初捕；如需记录重捕请改为「重捕」状态，或直接查看历史记录。"
+      :title="
+        recapture
+          ? `环号 ${ringNo} 已建档（${existed.speciesCn} · 共 ${historyCount} 条记录），本次将作为再次捕获登记`
+          : `环号 ${ringNo} 共有 ${historyCount} 条记录（${existed.speciesCn}）`
+      "
+      :description="
+        recapture
+          ? '鸟种自动沿用首捕档案，状态请在下方选择「重捕」或「回收」；环志日期不得早于上一条记录。'
+          : '同一环号允许多次捕获，完整轨迹见「历史」窗口。'
+      "
     >
       <template #default>
-        <el-button link type="primary" @click="emit('view-history', ringNo)">查看该环号历史记录</el-button>
+        <el-button link type="primary" @click="emit('view-history', ringNo)">查看个体追踪</el-button>
       </template>
     </el-alert>
   </div>
