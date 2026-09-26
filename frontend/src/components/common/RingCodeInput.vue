@@ -69,14 +69,14 @@ function compose(nextPrefix: string, nextSerial: string) {
     <el-alert
       v-if="existed"
       class="ring-alert"
-      type="warning"
+      type="info"
       show-icon
       :closable="false"
-      :title="`环号 ${ringNo} 已存在（${existed.speciesCn} · ${existed.status} · 该环号共 ${historyCount} 条历史记录）`"
-      description="重复环号不允许再次登记初捕；如需记录重捕请改为「重捕」状态，或直接查看历史记录。"
+      :title="`环号 ${ringNo} 已有档案（${existed.speciesCn} · 该环号共 ${historyCount} 条记录）`"
+      description="本次将作为该个体的再次捕获登记：鸟种自动沿用首次建档，状态记为「重捕 / 回收」，保存后可在个体轨迹中查看。"
     >
       <template #default>
-        <el-button link type="primary" @click="emit('view-history', ringNo)">查看该环号历史记录</el-button>
+        <el-button link type="primary" @click="emit('view-history', ringNo)">查看该个体轨迹</el-button>
       </template>
     </el-alert>
   </div>

@@ -61,7 +61,7 @@ npm run build    # 类型检查 + 生产构建
 │       ├── hooks/             # useSiteFilter / useAmap
 │       ├── pages/             # RingBoard / RingList / MeasureEntry / SiteList / SessionList
 │       ├── router/index.ts    # 路由表
-│       └── utils/             # stats.ts / geo.ts / db.ts / export.ts（+ seed.ts / id.ts / plain.ts / format.ts）
+│       └── utils/             # stats.ts / geo.ts / track.ts / db.ts / export.ts（+ seed.ts / id.ts / plain.ts / format.ts）
 ```
 
 ## 功能与路由
@@ -69,7 +69,7 @@ npm run build    # 类型检查 + 生产构建
 | 路由 | 页面 | 说明 |
 | --- | --- | --- |
 | `/` | 统计台 | 鸟种数、初捕/重捕比、鸟点分布图、鸟种计数与生境分布 |
-| `/rings` | 环志记录 | 金属环号 + 彩环双段录入与自动查重，重复时提示并跳转历史记录 |
+| `/rings` | 环志记录 | 首次环志建档；同一环号再次捕获可追加（鸟种自动沿用、状态记为重捕/回收），个体轨迹窗口按时间展示每次捕获的点位、相隔天数与直线距离，跨点高亮；日期早于上一条记录时拒绝保存并指出冲突日期 |
 | `/measure` | 量度测量 | 6 项量度带单位与范围校验，与同鸟种历史均值比对给出偏离提示 |
 | `/sites` | 鸟点台账 | 地图 / SVG 网格双模式切换，表单拾取坐标即时落点，点位间距提示 |
 | `/sessions` | 调查批次 | 观测条件录入，关闭批次后统计鸟种数、初捕数与重捕数 |
